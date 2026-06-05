@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
 from dotenv import load_dotenv
-from supabase import create_client
+from supabase import create_client, Client
 from groq import Groq
 
 load_dotenv()
@@ -17,9 +17,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Clients
-supabase = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
-groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+# Clients initialisés au démarrage de l'app (pas au niveau module)
+supabase: Client = None
+groq_client: Groq = None
+
+@app.on_event("startup")
+async def startup():
+    global supabase, groq_client
+    supabase = create_client(
+        os.getenv("SUPABASE_URL"),
+        os.getenv("SUPABASE_KEY")
+    )
+    groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 
 WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
 WHATSAPP_PHONE_ID = os.getenv("WHATSAPP_PHONE_ID")
@@ -51,14 +60,11 @@ async def receive_message(request: Request):
     except (KeyError, IndexError):
         return {"status": "ignored"}
 
-    # 1. Trouver l'agent dans Supabase
     agent_result = supabase.table("agents").select("*").eq("telephone", f"+{phone}").single().execute()
     agent = agent_result.data
 
-    # 2. Générer conseil avec Groq
     conseil = generer_conseil(texte, agent)
 
-    # 3. Stocker dans Supabase
     supabase.table("messages_whatsapp").insert({
         "agent_id": agent["id"] if agent else None,
         "contenu_brut": texte,
@@ -68,9 +74,7 @@ async def receive_message(request: Request):
         "type_message": detecter_type(texte),
     }).execute()
 
-    # 4. Répondre sur WhatsApp
     await envoyer_whatsapp(phone, conseil)
-
     return {"status": "ok"}
 
 
@@ -95,7 +99,6 @@ Réponds en français avec :
 Sois direct et pratique."""
         }]
     )
-
     return response.choices[0].message.content
 
 
@@ -131,7 +134,7 @@ def detecter_type(texte: str) -> str:
 # ─── Routes de test ───────────────────────────────────────────────────────────
 @app.get("/")
 def root():
-    return {"status": "AgroTech API en ligne ✅"}
+    return {"status": "AgroNiger API en ligne ✅"}
 
 @app.get("/test-supabase")
 def test_supabase():
